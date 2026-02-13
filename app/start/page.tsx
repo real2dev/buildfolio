@@ -15,11 +15,22 @@ export default function Start() {
     "questions"
   );
   const [progress, setProgress] = useState(0);
+  const [generation, setGeneration] = useState<{
+    name: string;
+    headline: string;
+    bio: string;
+    sections: Array<{ title: string; items: string[] }>;
+    callToAction: string;
+  } | null>(null);
+  const [shareId, setShareId] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [progressDone, setProgressDone] = useState(false);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const hasRequested = useRef(false);
 
   const currentQuestion = QUESTIONS[currentIndex];
   const isTransitioning = phase !== "idle";
@@ -138,6 +149,7 @@ export default function Start() {
   useEffect(() => {
     if (stage !== "generating") return;
     setProgress(0);
+    setProgressDone(false);
     const start = Date.now();
     const duration = 7200;
     const tick = window.setInterval(() => {
@@ -147,11 +159,48 @@ export default function Start() {
       setProgress(next);
       if (t >= 1) {
         window.clearInterval(tick);
-        window.setTimeout(() => setStage("preview"), 250);
+        setProgressDone(true);
       }
     }, 80);
     return () => window.clearInterval(tick);
   }, [stage]);
+
+  useEffect(() => {
+    if (stage !== "generating") return;
+    if (hasRequested.current) return;
+    hasRequested.current = true;
+    setGenerationError(null);
+    setGeneration(null);
+    setShareId(null);
+    fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answers }),
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "Generation failed");
+        setGeneration(json.data);
+        const saveRes = await fetch("/api/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: json.data }),
+        });
+        const saveJson = await saveRes.json();
+        if (saveJson?.ok && saveJson.id) setShareId(saveJson.id);
+      })
+      .catch((err: Error) => {
+        setGenerationError(err.message || "Generation failed");
+      });
+  }, [stage, answers]);
+
+  useEffect(() => {
+    if (stage !== "generating") return;
+    if (!progressDone) return;
+    if (!generation && !generationError) return;
+    const t = window.setTimeout(() => setStage("preview"), 250);
+    return () => window.clearTimeout(t);
+  }, [stage, progressDone, generation, generationError]);
 
   const displayValue = (id: string, fallback: string) =>
     answers[id]?.trim() ? answers[id].trim() : fallback;
@@ -330,7 +379,7 @@ export default function Start() {
 
               <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl px-6 py-6">
                 <div className="flex items-center justify-between text-sm text-white/70 mb-3">
-                  <span>Preparing layout</span>
+                  <span>{generationError ? "Retrying content" : "Preparing layout"}</span>
                   <span>{progress}%</span>
                 </div>
                 <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
@@ -344,6 +393,11 @@ export default function Start() {
                   <div className="h-20 rounded-xl bg-white/5 border border-white/10" />
                   <div className="h-20 rounded-xl bg-white/5 border border-white/10" />
                 </div>
+                {generationError && (
+                  <div className="mt-4 text-xs text-white/60">
+                    {generationError}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -360,10 +414,11 @@ export default function Start() {
                   <div>
                     <p className="text-white/50 text-sm">Name</p>
                     <p className="text-xl font-semibold">
-                      {displayValue("name", "Your Name")}
+                      {generation?.name ?? displayValue("name", "Your Name")}
                     </p>
                     <p className="text-white/70 mt-2">
-                      {displayValue("headline", "Your one-line headline")}
+                      {generation?.headline ??
+                        displayValue("headline", "Your one-line headline")}
                     </p>
                   </div>
                   <div className="text-right">
@@ -374,32 +429,64 @@ export default function Start() {
                   </div>
                 </div>
 
+                <p className="text-white/70 mt-6">
+                  {generation?.bio ??
+                    "A concise bio that highlights your strengths, focus areas, and what you’re looking to build next."}
+                </p>
+
                 <div className="mt-6 grid grid-cols-2 gap-4">
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-white/50 text-xs mb-2">Role</p>
-                    <p className="text-white/90">
-                      {displayValue("role", "Your role")}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-white/50 text-xs mb-2">Goal</p>
-                    <p className="text-white/90">
-                      {displayValue("goal", "Your goal")}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-white/50 text-xs mb-2">Top project</p>
-                    <p className="text-white/90">
-                      {displayValue("project", "Project name")}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-white/50 text-xs mb-2">Tools</p>
-                    <p className="text-white/90">
-                      {displayValue("stack", "Your tools")}
-                    </p>
-                  </div>
+                  {(generation?.sections?.length
+                    ? generation.sections
+                    : [
+                        {
+                          title: "Role",
+                          items: [displayValue("role", "Your role")],
+                        },
+                        {
+                          title: "Goal",
+                          items: [displayValue("goal", "Your goal")],
+                        },
+                        {
+                          title: "Top project",
+                          items: [displayValue("project", "Project name")],
+                        },
+                        {
+                          title: "Tools",
+                          items: [displayValue("stack", "Your tools")],
+                        },
+                      ]
+                  ).map((section) => (
+                    <div
+                      key={section.title}
+                      className="rounded-2xl border border-white/10 bg-white/5 p-4"
+                    >
+                      <p className="text-white/50 text-xs mb-2">
+                        {section.title}
+                      </p>
+                      <div className="text-white/90 space-y-1">
+                        {section.items.map((item) => (
+                          <p key={item}>{item}</p>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
+
+                <div className="mt-6 text-white/70">
+                  {generation?.callToAction ?? "Get in touch to collaborate."}
+                </div>
+
+                {shareId && (
+                  <div className="mt-6">
+                    <p className="text-white/50 text-xs mb-2">Share link</p>
+                    <a
+                      href={`/preview/${shareId}`}
+                      className="text-white/80 hover:text-white transition text-sm underline underline-offset-4"
+                    >
+                      /preview/{shareId}
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
           )}
