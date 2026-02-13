@@ -122,6 +122,7 @@ ${JSON.stringify(answers, null, 2)}
       raw: data ? undefined : text,
     });
   } catch (error) {
+    console.error("OpenAI generation error:", error);
     return Response.json(
       {
         ok: false,
