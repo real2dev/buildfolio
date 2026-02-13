@@ -65,6 +65,11 @@ const fallbackGeneration = (answers: Answers): Generation => ({
 });
 
 export async function POST(req: Request) {
+  console.log("OPENAI_API_KEY present:", !!process.env.OPENAI_API_KEY);
+  console.log(
+    "OPENAI_API_KEY length:",
+    process.env.OPENAI_API_KEY?.length ?? 0
+  );
   if (!process.env.OPENAI_API_KEY) {
     return Response.json(
       { ok: false, error: "Missing OPENAI_API_KEY" },
